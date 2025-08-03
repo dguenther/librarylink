@@ -232,11 +232,24 @@ fn launch_uwp_app(aumid: &str) {
                     println!("🚀 Process ID: {}", process_id);
                     println!();
                     
-                    // Optionally, you can get more information about the launched process
+                    // Get process information and start monitoring
                     if let Some(process_info) = get_process_info(process_id) {
                         println!("📋 Launched Process Details:");
                         println!("   Process Name: {}", process_info.name);
                         println!("   Process Path: {}", process_info.path);
+                        println!();
+                        
+                        // Extract directory from the process path
+                        let process_dir = get_directory_from_path(&process_info.path);
+                        println!("🔍 Starting process monitoring...");
+                        println!("   Monitoring directory: {}", process_dir);
+                        println!("   Initial process ID: {}", process_id);
+                        println!();
+                        
+                        // Start monitoring the process
+                        monitor_process(process_id, &process_dir);
+                    } else {
+                        println!("⚠️ Could not get process information for monitoring");
                     }
                 }
                 Err(e) => {
@@ -247,6 +260,7 @@ fn launch_uwp_app(aumid: &str) {
                     match launch_app_with_shell_execute(aumid) {
                         Ok(()) => {
                             println!("✅ App launched using fallback method (no process ID available)");
+                            println!("⚠️ Process monitoring not available with fallback method");
                         }
                         Err(e) => {
                             println!("❌ All launch methods failed: {}", e);
@@ -366,6 +380,115 @@ fn get_process_info(process_id: u32) -> Option<ProcessInfo> {
         CloseHandle(process_handle);
         
         Some(ProcessInfo { name, path })
+    }
+}
+
+fn get_directory_from_path(path: &str) -> String {
+    // Extract directory from full path
+    if let Some(last_slash) = path.rfind('\\') {
+        path[..last_slash].to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+fn monitor_process(mut current_process_id: u32, target_directory: &str) {
+    use std::thread;
+    use std::time::Duration;
+    
+    loop {
+        // Wait 5 seconds
+        thread::sleep(Duration::from_secs(5));
+        
+        // Check if current process is still alive
+        if is_process_alive(current_process_id) {
+            println!("✅ Process {} is still running", current_process_id);
+            continue;
+        }
+        
+        println!("❌ Process {} has terminated", current_process_id);
+        println!("🔍 Searching for replacement process in directory: {}", target_directory);
+        
+        // Look for another process in the same directory
+        match find_process_in_directory(target_directory) {
+            Some(new_process_id) => {
+                println!("🔄 Found replacement process: {}", new_process_id);
+                if let Some(process_info) = get_process_info(new_process_id) {
+                    println!("   Process Name: {}", process_info.name);
+                    println!("   Process Path: {}", process_info.path);
+                }
+                current_process_id = new_process_id;
+                println!("📍 Now monitoring process {}", current_process_id);
+                println!();
+            }
+            None => {
+                println!("💀 No replacement process found in target directory");
+                println!("🚪 Exiting monitoring...");
+                break;
+            }
+        }
+    }
+}
+
+fn is_process_alive(process_id: u32) -> bool {
+    unsafe {
+        let process_handle = OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION,
+            FALSE,
+            process_id,
+        );
+        
+        if process_handle.is_null() {
+            return false;
+        }
+        
+        let mut exit_code: u32 = 0;
+        let result = GetExitCodeProcess(process_handle, &mut exit_code);
+        CloseHandle(process_handle);
+        
+        // If GetExitCodeProcess succeeded and exit code is STILL_ACTIVE (259), process is alive
+        result != 0 && exit_code == 259 // STILL_ACTIVE = 259
+    }
+}
+
+fn find_process_in_directory(target_directory: &str) -> Option<u32> {
+    unsafe {
+        let mut process_ids: [u32; 1024] = [0; 1024];
+        let mut bytes_returned: u32 = 0;
+        
+        let success = EnumProcesses(
+            process_ids.as_mut_ptr(),
+            (process_ids.len() * mem::size_of::<u32>()) as u32,
+            &mut bytes_returned,
+        );
+        
+        if success == 0 {
+            return None;
+        }
+        
+        let process_count = bytes_returned as usize / mem::size_of::<u32>();
+        
+        // Check each process to see if it's in the target directory
+        let lowercase_target = target_directory.to_lowercase();
+        for i in 0..process_count {
+            let process_id = process_ids[i];
+            
+            if process_id == 0 {
+                continue;
+            }
+            
+            if let Some(process_info) = get_process_info(process_id) {
+                let process_dir = get_directory_from_path(&process_info.path);
+                println!("Checking process {}: {}", process_id, process_dir);
+                
+                // Case-insensitive comparison for Windows paths
+                if process_dir.to_lowercase().starts_with(&lowercase_target) {
+                    return Some(process_id);
+                }
+            }
+        }
+        
+        None
     }
 }
 
