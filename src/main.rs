@@ -1,8 +1,8 @@
-use windows_sys::{Win32::Foundation::*, Win32::System::ProcessStatus::*, Win32::System::Threading::*};
+use windows::{Win32::Foundation::*, Win32::System::ProcessStatus::*, Win32::System::Threading::*};
 use windows::ApplicationModel::AppInfo;
 use windows::Win32::UI::Shell::{IApplicationActivationManager, ApplicationActivationManager, AO_NONE};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
-use windows::core::HSTRING;
+use windows::core::{HSTRING, PWSTR};
 use std::mem;
 use std::env;
 
@@ -51,14 +51,14 @@ fn enumerate_win32_processes() {
         let mut bytes_returned: u32 = 0;
         
         // Enumerate all processes
-        let success = EnumProcesses(
+        let result = EnumProcesses(
             process_ids.as_mut_ptr(),
             (process_ids.len() * mem::size_of::<u32>()) as u32,
             &mut bytes_returned,
         );
         
-        if success == 0 {
-            println!("Failed to enumerate processes. Error: {}", GetLastError());
+        if result.is_err() {
+            println!("Failed to enumerate processes. Error: {:?}", GetLastError());
             return;
         }
         
@@ -80,27 +80,30 @@ fn enumerate_win32_processes() {
             }
             
             // Open the process
-            let process_handle: *mut std::ffi::c_void = OpenProcess(
+            let process_handle = OpenProcess(
                 PROCESS_QUERY_LIMITED_INFORMATION,
-                FALSE,
+                false,
                 process_id,
             );
             
-            if process_handle.is_null() {
-                println!("{}\t\t<Access Denied>", process_id);
-                continue;
-            }
+            let process_handle = match process_handle {
+                Ok(handle) => handle,
+                Err(_) => {
+                    println!("{}\t\t<Access Denied>", process_id);
+                    continue;
+                }
+            };
             
             // Get the process image name using QueryFullProcessImageNameW
             let mut image_name: [u16; 260] = [0; 260]; // MAX_PATH
             let mut size: u32 = image_name.len() as u32;
             let result = QueryFullProcessImageNameW(
                 process_handle,
-                0,
-                image_name.as_mut_ptr(),
+                PROCESS_NAME_WIN32,
+                PWSTR(image_name.as_mut_ptr()),
                 &mut size,
             );
-            if result != 0 && size > 0 {
+            if result.is_ok() && size > 0 {
                 let name_slice = &image_name[0..size as usize];
                 let process_name = String::from_utf16_lossy(name_slice);
                 println!("{}\t\t{}", process_id, process_name);
@@ -109,7 +112,7 @@ fn enumerate_win32_processes() {
             }
             
             // Close the process handle
-            CloseHandle(process_handle);
+            let _ = CloseHandle(process_handle);
         }
     }
 }
@@ -344,25 +347,26 @@ fn get_process_info(process_id: u32) -> Option<ProcessInfo> {
         // Open the process
         let process_handle = OpenProcess(
             PROCESS_QUERY_LIMITED_INFORMATION,
-            FALSE,
+            false,
             process_id,
         );
         
-        if process_handle.is_null() {
-            return None;
-        }
+        let process_handle = match process_handle {
+            Ok(handle) => handle,
+            Err(_) => return None,
+        };
         
         // Get the process image name
         let mut image_name: [u16; 260] = [0; 260]; // MAX_PATH
         let mut size: u32 = image_name.len() as u32;
         let result = QueryFullProcessImageNameW(
             process_handle,
-            0,
-            image_name.as_mut_ptr(),
+            PROCESS_NAME_WIN32,
+            PWSTR(image_name.as_mut_ptr()),
             &mut size,
         );
         
-        let path = if result != 0 && size > 0 {
+        let path = if result.is_ok() && size > 0 {
             let name_slice = &image_name[0..size as usize];
             String::from_utf16_lossy(name_slice)
         } else {
@@ -377,7 +381,7 @@ fn get_process_info(process_id: u32) -> Option<ProcessInfo> {
             .to_string();
         
         // Close the process handle
-        CloseHandle(process_handle);
+        let _ = CloseHandle(process_handle);
         
         Some(ProcessInfo { name, path })
     }
@@ -393,61 +397,103 @@ fn get_directory_from_path(path: &str) -> String {
 }
 
 fn monitor_process(mut current_process_id: u32, target_directory: &str) {
-    use std::thread;
-    use std::time::Duration;
-    
     loop {
-        // Wait 5 seconds
-        thread::sleep(Duration::from_secs(5));
+        // Open the current process handle with SYNCHRONIZE access for waiting
+        let process_handle = unsafe {
+            OpenProcess(
+                PROCESS_ACCESS_RIGHTS(0x00100000) | PROCESS_QUERY_LIMITED_INFORMATION, // SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
+                false,
+                current_process_id,
+            )
+        };
         
-        // Check if current process is still alive
-        if is_process_alive(current_process_id) {
-            println!("✅ Process {} is still running", current_process_id);
-            continue;
-        }
-        
-        println!("❌ Process {} has terminated", current_process_id);
-        println!("🔍 Searching for replacement process in directory: {}", target_directory);
-        
-        // Look for another process in the same directory
-        match find_process_in_directory(target_directory) {
-            Some(new_process_id) => {
-                println!("🔄 Found replacement process: {}", new_process_id);
-                if let Some(process_info) = get_process_info(new_process_id) {
-                    println!("   Process Name: {}", process_info.name);
-                    println!("   Process Path: {}", process_info.path);
+        let process_handle = match process_handle {
+            Ok(handle) => handle,
+            Err(_) => {
+                println!("❌ Failed to open process {} for monitoring", current_process_id);
+                println!("🔍 Searching for replacement process in directory: {}", target_directory);
+                
+                // Look for another process in the same directory
+                match find_process_in_directory(target_directory) {
+                    Some(new_process_id) => {
+                        println!("🔄 Found replacement process: {}", new_process_id);
+                        if let Some(process_info) = get_process_info(new_process_id) {
+                            println!("   Process Name: {}", process_info.name);
+                            println!("   Process Path: {}", process_info.path);
+                        }
+                        current_process_id = new_process_id;
+                        println!("📍 Now monitoring process {}", current_process_id);
+                        println!();
+                        continue;
+                    }
+                    None => {
+                        println!("💀 No replacement process found in target directory");
+                        println!("🚪 Exiting monitoring...");
+                        break;
+                    }
                 }
-                current_process_id = new_process_id;
-                println!("📍 Now monitoring process {}", current_process_id);
-                println!();
             }
-            None => {
-                println!("💀 No replacement process found in target directory");
-                println!("🚪 Exiting monitoring...");
-                break;
+        };
+        
+        println!("⏳ Waiting for process {} to terminate...", current_process_id);
+        
+        // Wait for the process to terminate (handle becomes signaled)
+        let wait_result = unsafe { WaitForSingleObject(process_handle, INFINITE) };
+        
+        // Close the handle after waiting
+        unsafe { let _ = CloseHandle(process_handle); };
+        
+        match wait_result {
+            WAIT_OBJECT_0 => {
+                println!("❌ Process {} has terminated", current_process_id);
+                println!("🔍 Searching for replacement process in directory: {}", target_directory);
+                
+                // Look for another process in the same directory
+                match find_process_in_directory(target_directory) {
+                    Some(new_process_id) => {
+                        println!("🔄 Found replacement process: {}", new_process_id);
+                        if let Some(process_info) = get_process_info(new_process_id) {
+                            println!("   Process Name: {}", process_info.name);
+                            println!("   Process Path: {}", process_info.path);
+                        }
+                        current_process_id = new_process_id;
+                        println!("📍 Now monitoring process {}", current_process_id);
+                        println!();
+                    }
+                    None => {
+                        println!("💀 No replacement process found in target directory");
+                        println!("🚪 Exiting monitoring...");
+                        break;
+                    }
+                }
+            }
+            WAIT_FAILED => {
+                println!("❌ WaitForSingleObject failed. Error: {:?}", unsafe { GetLastError() });
+                println!("🔍 Searching for replacement process in directory: {}", target_directory);
+                
+                // Look for another process in the same directory
+                match find_process_in_directory(target_directory) {
+                    Some(new_process_id) => {
+                        println!("🔄 Found replacement process: {}", new_process_id);
+                        if let Some(process_info) = get_process_info(new_process_id) {
+                            println!("   Process Name: {}", process_info.name);
+                            println!("   Process Path: {}", process_info.path);
+                        }
+                        current_process_id = new_process_id;
+                        println!("📍 Now monitoring process {}", current_process_id);
+                        println!();
+                    }
+                    None => {
+                        println!("💀 No replacement process found in target directory");
+                        println!("🚪 Exiting monitoring...");
+                        break;
+                    }
+                }
+            }
+            _ => {
+                println!("⚠️ Unexpected wait result: {:?}. Continuing monitoring...", wait_result);
             }
         }
-    }
-}
-
-fn is_process_alive(process_id: u32) -> bool {
-    unsafe {
-        let process_handle = OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION,
-            FALSE,
-            process_id,
-        );
-        
-        if process_handle.is_null() {
-            return false;
-        }
-        
-        let mut exit_code: u32 = 0;
-        let result = GetExitCodeProcess(process_handle, &mut exit_code);
-        CloseHandle(process_handle);
-        
-        // If GetExitCodeProcess succeeded and exit code is STILL_ACTIVE (259), process is alive
-        result != 0 && exit_code == 259 // STILL_ACTIVE = 259
     }
 }
 
@@ -456,13 +502,13 @@ fn find_process_in_directory(target_directory: &str) -> Option<u32> {
         let mut process_ids: [u32; 1024] = [0; 1024];
         let mut bytes_returned: u32 = 0;
         
-        let success = EnumProcesses(
+        let result = EnumProcesses(
             process_ids.as_mut_ptr(),
             (process_ids.len() * mem::size_of::<u32>()) as u32,
             &mut bytes_returned,
         );
         
-        if success == 0 {
+        if result.is_err() {
             return None;
         }
         
@@ -479,7 +525,6 @@ fn find_process_in_directory(target_directory: &str) -> Option<u32> {
             
             if let Some(process_info) = get_process_info(process_id) {
                 let process_dir = get_directory_from_path(&process_info.path);
-                println!("Checking process {}: {}", process_id, process_dir);
                 
                 // Case-insensitive comparison for Windows paths
                 if process_dir.to_lowercase().starts_with(&lowercase_target) {
