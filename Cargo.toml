@@ -9,6 +9,7 @@ windows = { version = "0.61.3", features = [
     "Win32",
     "Win32_Foundation",
     "Win32_System_Com",
+    "Win32_System_Console",
     "Win32_System_ProcessStatus",
     "Win32_System_Registry",
     "Win32_System_Threading",
