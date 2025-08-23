@@ -87,7 +87,6 @@ fn enumerate_win32_processes() {
 
         // Iterate through each process ID
         for &process_id in process_ids.iter().take(process_count) {
-
             // Skip process ID 0 (System Idle Process)
             if process_id == 0 {
                 continue;
@@ -495,7 +494,6 @@ fn find_process_in_directory(target_directory: &str) -> Option<u32> {
     // Check each process to see if it's in the target directory
     let lowercase_target = target_directory.to_lowercase();
     for &process_id in process_ids.iter().take(process_count) {
-
         if process_id == 0 {
             continue;
         }
