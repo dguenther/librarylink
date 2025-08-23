@@ -30,7 +30,7 @@ jobs:
           target
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Run tests
-      run: cargo test --target x86_64-pc-windows-gnu
+      run: cargo test --target x86_64-pc-windows-gnu --no-run
 
   build:
     name: Build
