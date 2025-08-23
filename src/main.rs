@@ -22,6 +22,8 @@ struct ProcessInfo {
 
 fn main() {
     unsafe {
+        // If AttachConsole fails, we can still run without a console
+        // This is useful for GUI applications or when running in the background
         AttachConsole(ATTACH_PARENT_PROCESS).unwrap_or(());
     }
 
