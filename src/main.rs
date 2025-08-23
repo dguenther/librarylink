@@ -22,10 +22,9 @@ struct ProcessInfo {
 
 fn main() {
     unsafe {
-        AttachConsole(ATTACH_PARENT_PROCESS).unwrap_or_else(|_| {
-            // If AttachConsole fails, we can still run without a console
-            // This is useful for GUI applications or when running in the background
-        });
+        // If AttachConsole fails, we can still run without a console
+        // This is useful for GUI applications or when running in the background
+        AttachConsole(ATTACH_PARENT_PROCESS).unwrap_or(());
     }
 
     let args: Vec<String> = env::args().collect();
@@ -89,9 +88,7 @@ fn enumerate_win32_processes() {
         println!("---\t\t------------");
 
         // Iterate through each process ID
-        for i in 0..process_count {
-            let process_id = process_ids[i];
-
+        for &process_id in process_ids.iter().take(process_count) {
             // Skip process ID 0 (System Idle Process)
             if process_id == 0 {
                 continue;
@@ -344,7 +341,7 @@ fn get_process_info(process_id: u32) -> Option<ProcessInfo> {
         };
 
         // Extract just the filename from the full path
-        let name = path.split('\\').last().unwrap_or(&path).to_string();
+        let name = path.split('\\').next_back().unwrap_or(&path).to_string();
 
         // Close the process handle
         let _ = CloseHandle(process_handle);
@@ -498,9 +495,7 @@ fn find_process_in_directory(target_directory: &str) -> Option<u32> {
 
     // Check each process to see if it's in the target directory
     let lowercase_target = target_directory.to_lowercase();
-    for i in 0..process_count {
-        let process_id = process_ids[i];
-
+    for &process_id in process_ids.iter().take(process_count) {
         if process_id == 0 {
             continue;
         }
