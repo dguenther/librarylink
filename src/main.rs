@@ -2,6 +2,7 @@
 
 use std::env;
 use std::mem;
+use std::process::Command;
 use windows::ApplicationModel::AppInfo;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
@@ -20,6 +21,104 @@ struct ProcessInfo {
     path: String,
 }
 
+#[derive(Debug)]
+struct AppEntry {
+    name: String,
+    aumid: String,
+}
+
+fn find_apps_powershell(search_term: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    // Build PowerShell command
+    let command = "Get-StartApps | ForEach-Object { \"$($_.Name)`t$($_.AppID)\" }".to_string();
+
+    let output = Command::new("powershell")
+        .args(["-Command", &command])
+        .output()?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "PowerShell command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let mut apps = Vec::new();
+
+    // Parse PowerShell output
+    for line in output_str.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Split by tab character
+        if let Some(tab_pos) = line.find('\t') {
+            let name = line[..tab_pos].trim().to_string();
+            let aumid = line[tab_pos + 1..].trim().to_string();
+
+            // Skip if AUMID is empty (likely a Win32 app)
+            if aumid.is_empty() {
+                continue;
+            }
+
+            // Apply search filter if provided
+            if let Some(term) = search_term {
+                if !name.to_lowercase().contains(&term.to_lowercase()) {
+                    continue;
+                }
+            }
+
+            apps.push(AppEntry { name, aumid });
+        }
+    }
+
+    // Sort apps by name
+    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    // Output results
+    print_apps_table(&apps);
+
+    Ok(())
+}
+
+fn print_apps_table(apps: &[AppEntry]) {
+    if apps.is_empty() {
+        println!("No applications found.");
+        return;
+    }
+
+    println!("=== UWP Applications ===");
+    println!("Found {} applications:\n", apps.len());
+
+    // Calculate column widths
+    let max_name_width = apps
+        .iter()
+        .map(|app| app.name.len())
+        .max()
+        .unwrap_or(12)
+        .max(12);
+
+    // Print header
+    println!(
+        "{:<width$} AUMID",
+        "Application Name",
+        width = max_name_width
+    );
+    println!(
+        "{:<width$} {}",
+        "-".repeat(max_name_width),
+        "-".repeat(50),
+        width = max_name_width
+    );
+
+    // Print apps
+    for app in apps {
+        println!("{:<width$} {}", app.name, app.aumid, width = max_name_width);
+    }
+}
+
 fn main() {
     unsafe {
         // If AttachConsole fails, we can still run without a console
@@ -32,98 +131,68 @@ fn main() {
     if args.len() < 2 {
         println!("Usage: {} <command> [arguments]", args[0]);
         println!("Commands:");
-        println!("  processes                    - List all Win32 processes");
         println!("  uwp-launch <AUMID>          - Look up UWP app info and launch it");
+        println!("  list-apps [options]         - List installed UWP apps and their AUMIDs");
+        println!();
+        println!("List Apps Options:");
+        println!("  --search <term>             - Search for apps containing the term");
         println!();
         println!("Examples:");
-        println!("  {} processes", args[0]);
         println!(
             "  {} uwp-launch Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
             args[0]
         );
+        println!("  {} list-apps", args[0]);
+        println!("  {} list-apps --search forza", args[0]);
         return;
     }
 
     match args[1].as_str() {
-        "processes" => enumerate_win32_processes(),
         "uwp-launch" => {
             if args.len() < 3 {
-                println!("Error: UWP launch requires an Application User Model ID");
+                println!(
+                    "Error: UWP launch requires an Application User Model ID. Try using librarylink list-apps to find it."
+                );
                 println!("Usage: {} uwp-launch <AUMID>", args[0]);
                 return;
             }
             launch_uwp_app(&args[2]);
         }
+        "list-apps" => {
+            let mut search_term: Option<&str> = None;
+
+            // Parse arguments
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--search" => {
+                        if i + 1 < args.len() {
+                            search_term = Some(&args[i + 1]);
+                            i += 2;
+                        } else {
+                            println!("Error: --search requires a search term");
+                            println!("Usage: {} list-apps --search <term>", args[0]);
+                            return;
+                        }
+                    }
+                    _ => {
+                        println!("Error: Unknown option '{}'", args[i]);
+                        println!("Usage: {} list-apps [--search <term>]", args[0]);
+                        return;
+                    }
+                }
+            }
+
+            match find_apps_powershell(search_term) {
+                Ok(()) => {}
+                Err(e) => {
+                    println!("Error finding applications: {}", e);
+                }
+            }
+        }
         _ => {
             println!("Unknown command: {}", args[1]);
-            println!("Use 'processes' or 'uwp-launch'");
-        }
-    }
-}
-
-fn enumerate_win32_processes() {
-    unsafe {
-        // Buffer to store process IDs
-        let mut process_ids: [u32; 1024] = [0; 1024];
-        let mut bytes_returned: u32 = 0;
-
-        // Enumerate all processes
-        let result = EnumProcesses(
-            process_ids.as_mut_ptr(),
-            (process_ids.len() * mem::size_of::<u32>()) as u32,
-            &mut bytes_returned,
-        );
-
-        if result.is_err() {
-            println!("Failed to enumerate processes. Error: {:?}", GetLastError());
-            return;
-        }
-
-        // Calculate number of processes
-        let process_count = bytes_returned as usize / mem::size_of::<u32>();
-
-        println!("=== Traditional Win32 Processes ===");
-        println!("Found {} processes:", process_count);
-        println!("PID\t\tProcess Name");
-        println!("---\t\t------------");
-
-        // Iterate through each process ID
-        for &process_id in process_ids.iter().take(process_count) {
-            // Skip process ID 0 (System Idle Process)
-            if process_id == 0 {
-                continue;
-            }
-
-            // Open the process
-            let process_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id);
-
-            let process_handle = match process_handle {
-                Ok(handle) => handle,
-                Err(_) => {
-                    println!("{}\t\t<Access Denied>", process_id);
-                    continue;
-                }
-            };
-
-            // Get the process image name using QueryFullProcessImageNameW
-            let mut image_name: [u16; 260] = [0; 260]; // MAX_PATH
-            let mut size: u32 = image_name.len() as u32;
-            let result = QueryFullProcessImageNameW(
-                process_handle,
-                PROCESS_NAME_WIN32,
-                PWSTR(image_name.as_mut_ptr()),
-                &mut size,
-            );
-            if result.is_ok() && size > 0 {
-                let name_slice = &image_name[0..size as usize];
-                let process_name = String::from_utf16_lossy(name_slice);
-                println!("{}\t\t{}", process_id, process_name);
-            } else {
-                println!("{}\t\t<Unknown>", process_id);
-            }
-
-            // Close the process handle
-            let _ = CloseHandle(process_handle);
+            println!("Use 'uwp-launch' or 'list-apps'");
         }
     }
 }
