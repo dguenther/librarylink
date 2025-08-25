@@ -524,10 +524,8 @@ fn find_apps_powershell(search_term: Option<&str>) -> Result<(), Box<dyn std::er
                 continue;
             }
 
-            if let Some(term) = search_term {
-                if !name.to_lowercase().contains(&term.to_lowercase()) {
-                    continue;
-                }
+            if search_term.is_some_and(|term| !name.to_lowercase().contains(&term.to_lowercase())) {
+                continue;
             }
 
             apps.push(AppEntry { name, aumid });
