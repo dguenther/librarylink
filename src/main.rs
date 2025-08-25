@@ -27,98 +27,6 @@ struct AppEntry {
     aumid: String,
 }
 
-fn find_apps_powershell(search_term: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    // Build PowerShell command
-    let command = "Get-StartApps | ForEach-Object { \"$($_.Name)`t$($_.AppID)\" }".to_string();
-
-    let output = Command::new("powershell")
-        .args(["-Command", &command])
-        .output()?;
-
-    if !output.status.success() {
-        return Err(format!(
-            "PowerShell command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
-    }
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    let mut apps = Vec::new();
-
-    // Parse PowerShell output
-    for line in output_str.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        // Split by tab character
-        if let Some(tab_pos) = line.find('\t') {
-            let name = line[..tab_pos].trim().to_string();
-            let aumid = line[tab_pos + 1..].trim().to_string();
-
-            // Skip if AUMID is empty (likely a Win32 app)
-            if aumid.is_empty() {
-                continue;
-            }
-
-            // Apply search filter if provided
-            if let Some(term) = search_term {
-                if !name.to_lowercase().contains(&term.to_lowercase()) {
-                    continue;
-                }
-            }
-
-            apps.push(AppEntry { name, aumid });
-        }
-    }
-
-    // Sort apps by name
-    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-
-    // Output results
-    print_apps_table(&apps);
-
-    Ok(())
-}
-
-fn print_apps_table(apps: &[AppEntry]) {
-    if apps.is_empty() {
-        println!("No applications found.");
-        return;
-    }
-
-    println!("=== UWP Applications ===");
-    println!("Found {} applications:\n", apps.len());
-
-    // Calculate column widths
-    let max_name_width = apps
-        .iter()
-        .map(|app| app.name.len())
-        .max()
-        .unwrap_or(12)
-        .max(12);
-
-    // Print header
-    println!(
-        "{:<width$} AUMID",
-        "Application Name",
-        width = max_name_width
-    );
-    println!(
-        "{:<width$} {}",
-        "-".repeat(max_name_width),
-        "-".repeat(50),
-        width = max_name_width
-    );
-
-    // Print apps
-    for app in apps {
-        println!("{:<width$} {}", app.name, app.aumid, width = max_name_width);
-    }
-}
-
 fn main() {
     unsafe {
         // If AttachConsole fails, we can still run without a console
@@ -132,7 +40,7 @@ fn main() {
         println!("Usage: {} <command> [arguments]", args[0]);
         println!("Commands:");
         println!("  uwp-launch <AUMID>          - Look up UWP app info and launch it");
-        println!("  list-apps [options]         - List installed UWP apps and their AUMIDs");
+        println!("  list-apps [options]         - List apps with AUMIDs (likely UWP/Store apps)");
         println!();
         println!("List Apps Options:");
         println!("  --search <term>             - Search for apps containing the term");
@@ -582,4 +490,87 @@ fn find_process_in_directory(target_directory: &str) -> Option<u32> {
     }
 
     None
+}
+
+fn find_apps_powershell(search_term: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let command = "Get-StartApps | ForEach-Object { \"$($_.Name)`t$($_.AppID)\" }".to_string();
+
+    let output = Command::new("powershell")
+        .args(["-Command", &command])
+        .output()?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "PowerShell command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let mut apps = Vec::new();
+
+    for line in output_str.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(tab_pos) = line.find('\t') {
+            let name = line[..tab_pos].trim().to_string();
+            let aumid = line[tab_pos + 1..].trim().to_string();
+
+            if aumid.is_empty() {
+                continue;
+            }
+
+            if let Some(term) = search_term {
+                if !name.to_lowercase().contains(&term.to_lowercase()) {
+                    continue;
+                }
+            }
+
+            apps.push(AppEntry { name, aumid });
+        }
+    }
+
+    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    print_apps_table(&apps);
+
+    Ok(())
+}
+
+fn print_apps_table(apps: &[AppEntry]) {
+    if apps.is_empty() {
+        println!("No applications found.");
+        return;
+    }
+
+    println!("=== Apps with AUMIDs (UWP/Store Apps) ===");
+    println!("Found {} applications:\n", apps.len());
+
+    // Calculate column widths
+    let max_name_width = apps
+        .iter()
+        .map(|app| app.name.len())
+        .max()
+        .unwrap_or(12)
+        .max(12);
+
+    println!(
+        "{:<width$} AUMID",
+        "Application Name",
+        width = max_name_width
+    );
+    println!(
+        "{:<width$} {}",
+        "-".repeat(max_name_width),
+        "-".repeat(50),
+        width = max_name_width
+    );
+
+    for app in apps {
+        println!("{:<width$} {}", app.name, app.aumid, width = max_name_width);
+    }
 }

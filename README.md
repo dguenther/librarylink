@@ -31,23 +31,15 @@ librarylink uwp-launch <AUMID>
 ```
 Launches a UWP app using its AUMID (Application User Model ID) and monitors the process.
 
-### List UWP Apps
+### List Apps
 ```bash
 librarylink list-apps
 ```
-Lists all available UWP apps with their AUMIDs in a table format.
+Lists installed apps with AUMIDs (likely UWP/Store apps) in a table format.
 
 You can also search for specific apps:
 ```bash
 librarylink list-apps --search forza
-```
-
-### Finding Game AUMIDs
-
-You can use the built-in `list-apps` command as shown above, or alternatively run this PowerShell command:
-
-```powershell
-Get-StartApps | Where-Object {$_.Name -match "*game name*"}
 ```
 
 ### Adding to Steam
