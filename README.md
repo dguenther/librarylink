@@ -25,34 +25,32 @@ This app was developed as a toy project, so I don't intend to provide ongoing su
 
 ## Usage
 
-### List Processes
-```bash
-librarylink processes
-```
-Lists all running Win32 processes with their Process IDs and executable paths.
-
 ### Launch UWP App
 ```bash
-librarylink uwp-launch <App ID>
+librarylink uwp-launch <AUMID>
 ```
-Launches a UWP application using its App ID (also called Application User Model ID) and monitors the process.
+Launches a UWP app using its AUMID (Application User Model ID) and monitors the process.
 
-### Finding Game App IDs
+### List Apps
+```bash
+librarylink list-apps
+```
+Lists installed apps with AUMIDs (likely UWP/Store apps) in a table format.
 
-To find the App ID for PC Xbox games, run the following command in PowerShell:
-
-```powershell
-Get-StartApps | Where-Object {$_.Name -match "*game name*"}
+You can also search for specific apps:
+```bash
+librarylink list-apps --search forza
 ```
 
 ### Adding to Steam
 
 1. Build or download `librarylink.exe`
-2. In Steam, go to "Library" → "Add a Non-Steam Game..."
-3. Click "Browse" and select `librarylink.exe`
-4. In the launch options, add: `uwp-launch <App ID>`
-5. Rename the entry to match your game
-6. (Optional) Add custom artwork and configure as needed
+2. Use `librarylink list-apps` to find the AUMID of your game
+3. In Steam, go to "Library" → "Add a Game" → "Add a Non-Steam Game..."
+4. Click "Browse" and select `librarylink.exe`
+5. In the launch options, add: `uwp-launch <AUMID>`
+6. Rename the entry to match your game
+7. (Optional) Add custom artwork and configure as needed
 
 **Example Steam Launch Options:**
 ```
